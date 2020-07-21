@@ -1,0 +1,29 @@
+# The parent line must be the first non-comment line in the file
+# This line defines the product name and version
+parent	larsimrad v08_00_00
+defaultqual	e19
+#
+fcldir  product_dir job
+#
+product         version
+larsim          v08_12_00
+bxdecay0	v1_0_5
+cetbuildtools   v7_15_01    -   only_for_build
+end_product_list
+
+qualifier      larsim         bxdecay0
+e19:py2:debug  e19:py2:debug  e19:debug 
+e19:py2:prof   e19:py2:prof   e19:prof  
+e19:debug      e19:debug      e19:debug 
+e19:prof       e19:prof       e19:prof  
+c7:py2:debug   c7:py2:debug   c7:debug 
+c7:py2:prof    c7:py2:prof    c7:prof  
+c7:debug       c7:debug       c7:debug 
+c7:prof	       c7:prof        c7:prof  
+end_qualifier_list
+
+# Preserve tabs and formatting in emacs and vi / vim:
+
+### Local Variables:
+### tab-width: 8
+### End:
