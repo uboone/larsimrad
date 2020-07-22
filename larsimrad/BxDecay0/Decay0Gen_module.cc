@@ -143,7 +143,7 @@ namespace evgen{
 
             double mass = bxdecay0::particle_mass_MeV(p.get_code());
             int pdg=0;
-            int simple_pdg=0;
+            //int simple_pdg=0; // simple_pdg is unused here
 
             if      (p.is_alpha   ()) { pdg = 1000020040; part = simb::MCParticle(track_id, pdg, primary_str,-1,mass,1); }
             else if (p.is_gamma   ()) { pdg =         22; part = simb::MCParticle(track_id, pdg, primary_str); }
