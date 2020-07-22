@@ -8,8 +8,17 @@
 
 #include <bxdecay0/i_random.h>
 #include <bxdecay0/event.h>            // Decay event data model
+#if defined __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmismatched-tags"
 #include <bxdecay0/decay0_generator.h> // Decay0 generator with OOP interface
+#pragma clang diagnostic pop
+#else 
+#include <bxdecay0/decay0_generator.h> // Decay0 generator with OOP interface
+#endif
 #include <bxdecay0/particle.h>
+
+
 
 namespace evgen {
   /// Module to generate particles created by radiological decay, patterend off of SingleGen
@@ -40,7 +49,8 @@ namespace evgen {
 
 
   /// \brief Wrapper functor for a standard random number generator
-  struct clhep_random : public bxdecay0::i_random{
+  class clhep_random : public bxdecay0::i_random{
+  public:
     /// Constructor
     clhep_random(CLHEP::HepRandomEngine& gen):
       m_generator(gen),
@@ -53,7 +63,7 @@ namespace evgen {
     }
     CLHEP::HepRandomEngine& m_generator;
     CLHEP::RandFlat m_rand_flat;
-
+    virtual ~clhep_random() {};
   };
 
 }
