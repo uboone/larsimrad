@@ -8,10 +8,14 @@
 
 #include <bxdecay0/i_random.h>
 #include <bxdecay0/event.h>            // Decay event data model
+#if defined __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmismatched-tags"
 #include <bxdecay0/decay0_generator.h> // Decay0 generator with OOP interface
 #pragma clang diagnostic pop
+#else 
+#include <bxdecay0/decay0_generator.h> // Decay0 generator with OOP interface
+#endif
 #include <bxdecay0/particle.h>
 
 
