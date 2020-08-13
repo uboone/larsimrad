@@ -165,10 +165,10 @@ namespace evgen {
     if (timed_mode) {
       m_T1 = pset.get<double>("T1");
     } else {
-      const detinfo::DetectorProperties* detprop = lar::providerFrom<detinfo::DetectorPropertiesService>();
-      int nsample = detprop->NumberTimeSamples();
-      double rate = detprop->SamplingRate();
-      m_T0 = -nsample * rate;
+      auto const clockData = art::ServiceHandle<detinfo::DetectorClocksService const>()->DataForJob();
+      auto const detProp = art::ServiceHandle<detinfo::DetectorPropertiesService const>()->DataForJob(clockData);
+      int nsample = detProp.NumberTimeSamples();
+      m_T0 = -nsample * sampling_rate(clockData);
       m_T1 = -m_T0;
     }
 
