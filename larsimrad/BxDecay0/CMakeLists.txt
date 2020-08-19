@@ -3,6 +3,7 @@ cet_find_library( BXDECAY0 NAMES BxDecay0 PATHS ENV BXDECAY0_LIB NO_DEFAULT_PATH
 
 art_make(MODULE_LIBRARIES
          larsim_Simulation
+         lardataalg_DetectorInfo
          lardataobj_Simulation
          nusimdata_SimulationBase
          larcoreobj_SummaryData
