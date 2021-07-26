@@ -28,6 +28,8 @@ cet_set_compiler_flags(DIAGS CAUTIOUS
 cet_report_compiler_flags()
 
 # these are minimum required versions, not the actual product versions
+unset(GSL_FOUND CACHE) # Workaround infelicity in CMake's FindPkgConfig.cmake.
+find_ups_product(gsl)
 find_ups_product(art_root_io)
 find_ups_product( larcore )
 find_ups_product( larcoreobj )
@@ -37,7 +39,6 @@ find_ups_product( larsim )
 find_ups_product( bxdecay0 )
 find_ups_product( nugen )
 find_ups_product( nurandom )
-find_ups_product( gsl )
 
 # macros for dictionary and simple_plugin
 include(ArtDictionary)
