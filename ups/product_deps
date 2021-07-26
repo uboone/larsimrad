@@ -7,8 +7,8 @@ fcldir  product_dir job
 #
 product         version
 larsim          v09_13_03
-bxdecay0	v1_0_6a
-cetbuildtools   v7_17_01    -   only_for_build
+bxdecay0	v1_0_9
+cetbuildtools   v8_11_00    -   only_for_build
 end_product_list
 
 qualifier      larsim         bxdecay0
