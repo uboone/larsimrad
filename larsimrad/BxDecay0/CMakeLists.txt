@@ -12,11 +12,11 @@ art_make(MODULE_LIBRARIES
          larcore_Geometry_Geometry_service
          nurandom_RandomUtils_NuRandomService_service
          ${BXDECAY0}
-         ${ART_FRAMEWORK_SERVICES_REGISTRY}
-         ${ART_ROOT_IO_TFILE_SUPPORT}
-         ${ART_ROOT_IO_TFILESERVICE_SERVICE}
-         art_Persistency_Provenance
-         ${MF_MESSAGELOGGER}
+         art::Framework_Services_Registry
+         art_root_io::tfile_support
+         art_root_io::TFileService_service
+         art::Persistency_Provenance
+         messagefacility::MF_MessageLogger
          ${CLHEP}
          ROOT::Core
          ROOT::EG
