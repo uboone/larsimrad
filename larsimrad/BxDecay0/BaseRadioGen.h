@@ -126,7 +126,13 @@ namespace evgen {
 
     std::regex  m_regex_material;
     std::regex  m_regex_volume;
+    std::vector<TGeoVolume  *> m_good_volumes   = {};
+    std::vector<TGeoMaterial*> m_good_materials = {};
 
+    size_t m_max_tries_event;
+    size_t m_max_tries_rate_calculation;
+    size_t m_target_n_point_rate_calculation;
+    
     int m_nevent;
     std::map<int,TH2D*> m_pos_xy_TH2D;
     std::map<int,TH2D*> m_pos_xz_TH2D;
@@ -150,6 +156,10 @@ namespace evgen {
 
     produces<std::vector<simb::MCTruth>>();
     produces<sumdata::RunData, art::InRun>();
+
+    m_max_tries_event = pset.get<size_t>("max_tries_event", 1'000'000);
+    m_max_tries_rate_calculation = pset.get<size_t>("max_tries_rate_calculation", 40'000'000);
+    m_target_n_point_rate_calculation = pset.get<size_t>("target_n_point_rate_calculation", 10'000);
 
     m_material = pset.get<std::string>("material", ".*");
     m_regex_material = (std::regex)m_material;
@@ -188,7 +198,7 @@ namespace evgen {
       world->GetVolume()->SetAsTopVolume();
       const TGeoNode* node_to_throw = nullptr; //
       bool found = findNode(world, m_volume_rand, node_to_throw);
-
+      
       if (not found) {
         throw cet::exception("BaseRadioGen") << "Didn't find the node " << m_volume_rand << " exiting because I cannot generate events in this volume.";
       }
@@ -263,14 +273,33 @@ namespace evgen {
 
     if (m_material != ".*" || m_volume_gen != ".*") {
       std::cout << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
-      int nfound=0;
-      int ntries=0;
-      int npoint=10000; // 1% statistical uncertainty
-      int nmax_tries=npoint*1000;
+      size_t nfound=0;
+      size_t ntries=0;
+      
       double xyz[3];
       TGeoNode* node = nullptr;
 
-      while (nfound<npoint and ntries<nmax_tries) {
+      TObjArray* volumes = m_geo_manager->GetListOfVolumes();
+      TList* materials = m_geo_manager->GetListOfMaterials();
+
+      for (int i=0; i<volumes->GetEntries(); ++i) {
+        TGeoVolume* volume = (TGeoVolume*)volumes->At(i);
+        std::string volume_name = volume->GetName();
+        bool good = std::regex_match(volume_name, m_regex_volume);
+        if (good) m_good_volumes.push_back(volume);
+      }
+      
+      for (int i=0; i<materials->GetEntries(); ++i) {
+        TGeoMaterial* material = (TGeoMaterial*)materials->At(i);
+        std::string material_name = material->GetName();
+        bool good = std::regex_match(material_name, m_regex_material);
+        if (good) m_good_materials.push_back(material);
+      }
+
+      std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
+      std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
+
+      while (nfound<m_target_n_point_rate_calculation and ntries<m_max_tries_rate_calculation) {
         ntries++;
         node = nullptr;
         xyz[0] = m_X0 + (m_X1 - m_X0) * m_random_flat->fire(0, 1.);
@@ -281,20 +310,30 @@ namespace evgen {
         if (!node) continue;
         if (node->IsOverlapping()) continue;
 
-        std::string material_name = node->GetMedium()->GetMaterial()->GetName();
-        std::string volume_name = node->GetVolume()->GetName();
-        bool flag = std::regex_match(material_name, m_regex_material) && std::regex_match(volume_name, m_regex_volume);
-        if (!flag) continue;
+        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), node->GetMedium()->GetMaterial());
+        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), node->GetVolume());
+        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
+
+        if (!good) continue;
         nfound++;
+        
       }
 
       if (nfound==0) {
-        throw cet::exception("BaseRadioGen") << "Didn't find the material " << m_material << " or the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
+        throw cet::exception("BaseRadioGen") << "Didn't find the material " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n"
+                                             << "Position of the box:\n"
+                                             << m_X0 << " " << m_X1 <<"\n"
+                                             << m_Y0 << " " << m_Y1 <<"\n"
+                                             << m_Z0 << " " << m_Z1 <<"\n";
       }
 
       double proportion = (double)nfound / ntries;
-      std::cout << "There is " << proportion*100. << "% of " << m_material << " in the specified volume.\n";
+      double proportion_error = proportion*sqrt(1./nfound+1./ntries);
       m_volume_cc *= proportion;
+
+      std::cout << "There is " << proportion*100. << "% (+/- " << proportion_error*100. << "%) of " << m_material << " and " << m_volume_gen << " in the specified volume ("
+                << 100.*proportion_error/proportion << "% relat. uncert.).\n"
+                << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=10,000) in your fhicl.\n\n\n";
     }
 
   }
@@ -341,20 +380,25 @@ namespace evgen {
   bool BaseRadioGen::GetGoodPositionTime(TLorentzVector& position) {
 
     double time = m_T0 + m_random_flat->fire()*(m_T1 - m_T0);
-    int ntries=0;
-    int nmaxtries=10000;
-    bool flag=0;
-    while (ntries++<nmaxtries) {
+    size_t ntries=0;
+    
+    while (ntries++<m_max_tries_event) {
       position.SetXYZT(m_X0 + m_random_flat->fire()*(m_X1 - m_X0),
                        m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0),
                        m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0),
                        time);
-
+      
+      if (not m_geo_volume_mode)
+        return true;
+      
       const TGeoNode* node = m_geo_manager->FindNode(position.X(),position.Y(),position.Z());
-      std::string material_name = node->GetMedium()->GetMaterial()->GetName();
-      std::string volume_name = node->GetVolume()->GetName();
-      flag = std::regex_match(material_name, m_regex_material) && std::regex_match(volume_name, m_regex_volume);
-      if (flag) return true;
+      TGeoMaterial* material = node->GetMedium()->GetMaterial();
+      TGeoVolume  * volume   = node->GetVolume();
+      auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
+      auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
+      bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
+      
+      if (good) return true;
     }
     return false;
   }
@@ -368,7 +412,8 @@ namespace evgen {
       return m_random_poisson->fire(m_rate);
     } else {
       double rate = abs(m_Bq * (m_T1-m_T0) * m_volume_cc / 1.0E9);
-      return m_random_poisson->fire(rate);
+      int n_ev = m_random_poisson->fire(rate);
+      return n_ev;
     }
 
   }
