@@ -48,10 +48,12 @@
 #include "TMath.h"
 #include "TFile.h"
 #include "TH1D.h"
+#include "TF1.h"
 #include "TH2D.h"
 #include "TCanvas.h"
 #include "TGraph.h"
 #include "TVector3.h"
+#include "TRandom.h"
 
 #include "CLHEP/Random/RandFlat.h"
 #include "CLHEP/Random/RandPoisson.h"
@@ -132,7 +134,15 @@ namespace evgen {
     size_t m_max_tries_event;
     size_t m_max_tries_rate_calculation;
     size_t m_target_n_point_rate_calculation;
-    
+
+          
+    bool  m_flat_distrib_xpos;
+    bool  m_flat_distrib_ypos;
+    bool  m_flat_distrib_zpos;
+    TF1* m_distrib_xpos;
+    TF1* m_distrib_ypos;
+    TF1* m_distrib_zpos;
+
     int m_nevent;
     std::map<int,TH2D*> m_pos_xy_TH2D;
     std::map<int,TH2D*> m_pos_xz_TH2D;
@@ -336,6 +346,21 @@ namespace evgen {
                 << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=10,000) in your fhicl.\n\n\n";
     }
 
+    m_flat_distrib_xpos = pset.get<double>("flat_distribution_x", 1);
+    m_flat_distrib_ypos = pset.get<double>("flat_distribution_y", 1);
+    m_flat_distrib_zpos = pset.get<double>("flat_distribution_z", 1);
+
+    m_distrib_xpos = nullptr;
+    m_distrib_ypos = nullptr;
+    m_distrib_zpos = nullptr;
+
+    auto rand = CLHEP::RandFlat(m_engine);
+    gRandom->SetSeed(rand.fireInt(std::numeric_limits<long>::max()));
+    
+    if (not m_flat_distrib_xpos) m_distrib_xpos = new TF1("distrib_x", pset.get<std::string>("distrib_x").c_str(), m_X0, m_X1);
+    if (not m_flat_distrib_ypos) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
+    if (not m_flat_distrib_zpos) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
+
   }
 
   void BaseRadioGen::produce(art::Event& evt) {
@@ -383,10 +408,24 @@ namespace evgen {
     size_t ntries=0;
     
     while (ntries++<m_max_tries_event) {
-      position.SetXYZT(m_X0 + m_random_flat->fire()*(m_X1 - m_X0),
-                       m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0),
-                       m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0),
-                       time);
+      double xpos = std::numeric_limits<double>::signaling_NaN();
+      double ypos = std::numeric_limits<double>::signaling_NaN();
+      double zpos = std::numeric_limits<double>::signaling_NaN();
+      
+      if (m_flat_distrib_xpos) xpos = m_X0 + m_random_flat->fire()*(m_X1 - m_X0);
+      else                     xpos = m_distrib_xpos->GetRandom();
+
+      if (m_flat_distrib_ypos) ypos = m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0);
+      else                     ypos = m_distrib_ypos->GetRandom();
+
+      if (m_flat_distrib_zpos) zpos = m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0);
+      else                     zpos = m_distrib_zpos->GetRandom();
+
+      if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
+        MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
+      }
+        
+      position.SetXYZT(xpos, ypos, zpos, time);
       
       if (not m_geo_volume_mode)
         return true;
