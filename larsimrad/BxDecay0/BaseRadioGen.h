@@ -95,6 +95,8 @@ namespace evgen {
   private:
     void SimplePDG(int pdg, int& simple, std::string& name);
     void DeclareOutputHistos();
+    std::set<const TGeoNode*> m_all_nodes;
+    void FillAllNodes(const TGeoNode* curnode);
     bool findNode(const TGeoNode* curnode, std::string& tgtnname,
                   const TGeoNode* & targetnode);
     bool findMotherNode(const TGeoNode* cur_node, std::string& daughter_name,
@@ -132,10 +134,7 @@ namespace evgen {
     std::vector<TGeoMaterial*> m_good_materials = {};
 
     size_t m_max_tries_event;
-    size_t m_max_tries_rate_calculation;
-    size_t m_target_n_point_rate_calculation;
-
-          
+    
     bool  m_flat_distrib_xpos;
     bool  m_flat_distrib_ypos;
     bool  m_flat_distrib_zpos;
@@ -168,8 +167,6 @@ namespace evgen {
     produces<sumdata::RunData, art::InRun>();
 
     m_max_tries_event = pset.get<size_t>("max_tries_event", 1'000'000);
-    m_max_tries_rate_calculation = pset.get<size_t>("max_tries_rate_calculation", 40'000'000);
-    m_target_n_point_rate_calculation = pset.get<size_t>("target_n_point_rate_calculation", 10'000);
 
     m_material = pset.get<std::string>("material", ".*");
     m_regex_material = (std::regex)m_material;
@@ -278,25 +275,27 @@ namespace evgen {
     m_random_flat    = std::make_unique<CLHEP::RandFlat   >(m_engine);
     m_random_poisson = std::make_unique<CLHEP::RandPoisson>(m_engine);
 
-
-    m_volume_cc = (m_X1-m_X0) * (m_Y1-m_Y0) * (m_Z1-m_Z0);
-
     if (m_material != ".*" || m_volume_gen != ".*") {
-      std::cout << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
-      size_t nfound=0;
-      size_t ntries=0;
+      std::cout << "Calculating the volume of " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
       
       double xyz[3];
-      TGeoNode* node = nullptr;
 
-      TObjArray* volumes = m_geo_manager->GetListOfVolumes();
-      TList* materials = m_geo_manager->GetListOfMaterials();
-
+      TObjArray* volumes   = m_geo_manager->GetListOfVolumes();
+      TList    * materials = m_geo_manager->GetListOfMaterials();
+      
       for (int i=0; i<volumes->GetEntries(); ++i) {
         TGeoVolume* volume = (TGeoVolume*)volumes->At(i);
         std::string volume_name = volume->GetName();
         bool good = std::regex_match(volume_name, m_regex_volume);
-        if (good) m_good_volumes.push_back(volume);
+        if (good) {
+          std::cout << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
+          if (volume->GetShape()->TestShapeBits(TGeoShape::kGeoBox)) {
+            TGeoBBox* box = dynamic_cast<TGeoBBox*>(volume->GetShape());
+            if (box)
+              std::cout << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
+          }
+          m_good_volumes.push_back(volume);
+        }
       }
       
       for (int i=0; i<materials->GetEntries(); ++i) {
@@ -305,45 +304,32 @@ namespace evgen {
         bool good = std::regex_match(material_name, m_regex_material);
         if (good) m_good_materials.push_back(material);
       }
-
-      std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
-      std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
-
-      while (nfound<m_target_n_point_rate_calculation and ntries<m_max_tries_rate_calculation) {
-        ntries++;
-        node = nullptr;
-        xyz[0] = m_X0 + (m_X1 - m_X0) * m_random_flat->fire(0, 1.);
-        xyz[1] = m_Y0 + (m_Y1 - m_Y0) * m_random_flat->fire(0, 1.);
-        xyz[2] = m_Z0 + (m_Z1 - m_Z0) * m_random_flat->fire(0, 1.);
-        m_geo_manager->SetCurrentPoint(xyz);
-        node = m_geo_manager->FindNode();
-        if (!node) continue;
-        if (node->IsOverlapping()) continue;
-
-        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), node->GetMedium()->GetMaterial());
-        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), node->GetVolume());
+      
+      FillAllNodes(gGeoManager->GetTopNode());
+      size_t n_nodes = 0;
+      m_volume_cc = 0;
+      
+      for (auto const& node: m_all_nodes) {
+        auto volume   = node->GetVolume();
+        auto material = node->GetMedium()->GetMaterial();
+        
+        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
+        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
+        
         bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-
-        if (!good) continue;
-        nfound++;
+        n_nodes+=good;
+        if (good)
+          m_volume_cc += volume->GetShape()->Capacity();
         
       }
-
-      if (nfound==0) {
-        throw cet::exception("BaseRadioGen") << "Didn't find the material " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n"
-                                             << "Position of the box:\n"
-                                             << m_X0 << " " << m_X1 <<"\n"
-                                             << m_Y0 << " " << m_Y1 <<"\n"
-                                             << m_Z0 << " " << m_Z1 <<"\n";
-      }
-
-      double proportion = (double)nfound / ntries;
-      double proportion_error = proportion*sqrt(1./nfound+1./ntries);
-      m_volume_cc *= proportion;
-
-      std::cout << "There is " << proportion*100. << "% (+/- " << proportion_error*100. << "%) of " << m_material << " and " << m_volume_gen << " in the specified volume ("
-                << 100.*proportion_error/proportion << "% relat. uncert.).\n"
-                << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=10,000) in your fhicl.\n\n\n";
+      std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
+      std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
+      std::cout << n_nodes << " nodes (i.e. instance of the volumes) correspond to the both the regexes.\n";
+      
+      if (n_nodes==0) 
+        throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
+      
+      std::cout << "This amounts to " << m_volume_cc << " cm^3 for the all the volumes where the decays are going to generated.\n";
     }
 
     m_flat_distrib_xpos = pset.get<double>("flat_distribution_x", 1);
@@ -456,9 +442,23 @@ namespace evgen {
     }
 
   }
+  
+  void BaseRadioGen::FillAllNodes(const TGeoNode* curnode) {
+    if (!curnode) return;
+    TObjArray* daunodes = curnode->GetNodes();
+    if (!daunodes) return;
+  
+    TIter next(daunodes);
 
+    const TGeoNode* anode = 0;
+    while ( (anode = (const TGeoNode*)next()) ) {
+      m_all_nodes.insert(anode);
+      FillAllNodes(anode);
+    }
+  }
+  
   bool BaseRadioGen::findNode(const TGeoNode* curnode, std::string& tgtnname,
-                           const TGeoNode* & targetnode)
+                              const TGeoNode* & targetnode)
   /// Shamelessly stolen from here: https://cdcvs.fnal.gov/redmine/attachments/6719/calc_bbox.C
   {
     std::string nname = curnode->GetName();
