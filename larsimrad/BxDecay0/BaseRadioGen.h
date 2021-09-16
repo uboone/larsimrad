@@ -93,10 +93,15 @@ namespace evgen {
     void GetZs(double& Z0, double& Z1) {Z0=m_Z0; Z1=m_Z1;}
 
   private:
+    void CalculateActiveVolumeFromAllNodes();
+    void CalculateActiveVolumeFromXYZ();
     void SimplePDG(int pdg, int& simple, std::string& name);
     void DeclareOutputHistos();
     std::set<const TGeoNode*> m_all_nodes;
     void FillAllNodes(const TGeoNode* curnode);
+    void GetNodeXYZMinMax(const TGeoNode* from, const TGeoNode* to,
+                          double& x_min, double &x_max, double& y_min, double& y_max, double& z_min, double& z_max);
+    bool IsDaughterNode(const TGeoNode* daughter_node, const TGeoNode* mother_node);
     bool findNode(const TGeoNode* curnode, std::string& tgtnname,
                   const TGeoNode* & targetnode);
     bool findMotherNode(const TGeoNode* cur_node, std::string& daughter_name,
@@ -127,13 +132,18 @@ namespace evgen {
 
     bool m_geo_volume_mode;
     bool m_rate_mode;
-
+    bool m_volume_rand_present;
+    
+    size_t m_max_tries_event;
+    size_t m_max_tries_rate_calculation;
+    size_t m_target_n_point_rate_calculation;
+    
     std::regex  m_regex_material;
     std::regex  m_regex_volume;
-    std::vector<TGeoVolume  *> m_good_volumes   = {};
-    std::vector<TGeoMaterial*> m_good_materials = {};
+    std::map<const TGeoNode*,double> m_good_nodes     = {};
+    std::vector<const TGeoVolume  *> m_good_volumes   = {};
+    std::vector<const TGeoMaterial*> m_good_materials = {};
 
-    size_t m_max_tries_event;
     
     bool  m_flat_distrib_xpos;
     bool  m_flat_distrib_ypos;
@@ -152,11 +162,75 @@ namespace evgen {
     std::map<int,TH1D*> m_ke_TH1D;
     std::map<int,TH1D*> m_time_TH1D;
     TH1D* m_pdg_TH1D;
-
-
   };
 
+  
+  void BaseRadioGen::GetNodeXYZMinMax(const TGeoNode* from, const TGeoNode* to,
+                                      double& x_min, double &x_max,
+                                      double& y_min, double& y_max,
+                                      double& z_min, double& z_max) {
+    
+    std::vector<const TGeoNode*> mother_nodes;
+    const TGeoNode* current_node=from;
+    std::string daughter_name = from->GetName();
+    int nmax = 20;
+    int iter=0;
+    while (current_node != to and iter++<nmax) {
+      const TGeoNode* mother_node = nullptr;
+      daughter_name =current_node->GetName();
+      bool found_mum = findMotherNode(to, daughter_name, mother_node);
+      if(not found_mum) {
+        throw cet::exception("BaseRadioGen") << "Didn't find the mum of the following node: " << daughter_name;
+      }
+      mother_nodes.push_back(mother_node);
+      current_node = mother_node;
+    }
 
+
+    TGeoVolume* vol   = from->GetVolume();
+    TGeoShape*  shape = vol->GetShape();
+    TGeoBBox*   bbox  = (TGeoBBox*)shape;
+
+    double dx = bbox->GetDX();
+    double dy = bbox->GetDY();
+    double dz = bbox->GetDZ();
+
+    double halfs [3] = { dx, dy, dz };
+    double posmin[3] = {  1.0e30,  1.0e30,  1.0e30 };
+    double posmax[3] = { -1.0e30, -1.0e30, -1.0e30 };
+
+    const double* origin = bbox->GetOrigin();
+    for ( int ix = -1; ix <= 1; ix += 2) {
+      for ( int iy = -1; iy <= 1; iy += 2) {
+        for ( int iz = -1; iz <= 1; iz += 2) {
+          double local[3];
+          local[0] = origin[0] + (double)ix*halfs[0];
+          local[1] = origin[1] + (double)iy*halfs[1];
+          local[2] = origin[2] + (double)iz*halfs[2];
+          double master[3];
+          from->LocalToMaster(local,master);
+          for (auto const& mum: mother_nodes) {
+            local[0] = master[0];
+            local[1] = master[1];
+            local[2] = master[2];
+            mum->LocalToMaster(local, master);
+          }
+          for ( int j = 0; j < 3; ++j ) {
+            posmin[j] = TMath::Min(posmin[j],master[j]);
+            posmax[j] = TMath::Max(posmax[j],master[j]);
+          }
+        }
+      }
+    }
+      
+    x_min = posmin[0];
+    y_min = posmin[1];
+    z_min = posmin[2];
+    x_max = posmax[0];
+    y_max = posmax[1];
+    z_max = posmax[2];
+  }
+  
   BaseRadioGen::BaseRadioGen(fhicl::ParameterSet const& pset):
     EDProducer(pset),
     m_engine(art::ServiceHandle<rndm::NuRandomService>()->createEngine(*this, "HepJamesRandom", "BaseRadioGen", pset, "SeedBaseRadioGen")) {
@@ -167,7 +241,9 @@ namespace evgen {
     produces<sumdata::RunData, art::InRun>();
 
     m_max_tries_event = pset.get<size_t>("max_tries_event", 1'000'000);
-
+    m_max_tries_rate_calculation = pset.get<size_t>("max_tries_rate_calculation", 40'000'000);
+    m_target_n_point_rate_calculation = pset.get<size_t>("target_n_point_rate_calculation", 100'000);
+    
     m_material = pset.get<std::string>("material", ".*");
     m_regex_material = (std::regex)m_material;
 
@@ -189,88 +265,7 @@ namespace evgen {
       m_T1 = -m_T0;
     }
 
-    m_geo_volume_mode = pset.get_if_present<std::string>("volume_rand", m_volume_rand);
-
     m_geo_manager = m_geo_service->ROOTGeoManager();
-
-    if (not m_geo_volume_mode) {
-      m_X0 = pset.get<double>("X0");
-      m_Y0 = pset.get<double>("Y0");
-      m_Z0 = pset.get<double>("Z0");
-      m_X1 = pset.get<double>("X1");
-      m_Y1 = pset.get<double>("Y1");
-      m_Z1 = pset.get<double>("Z1");
-    } else {
-      const TGeoNode* world = gGeoManager->GetNode(0);
-      world->GetVolume()->SetAsTopVolume();
-      const TGeoNode* node_to_throw = nullptr; //
-      bool found = findNode(world, m_volume_rand, node_to_throw);
-      
-      if (not found) {
-        throw cet::exception("BaseRadioGen") << "Didn't find the node " << m_volume_rand << " exiting because I cannot generate events in this volume.";
-      }
-
-      std::vector<const TGeoNode*> mother_nodes;
-      const TGeoNode* current_node=node_to_throw;
-      std::string daughter_name = node_to_throw->GetName();
-      int nmax = 20;
-      int iter=0;
-      while (current_node != world and iter++<nmax) {
-        const TGeoNode* mother_node = nullptr;
-        daughter_name =current_node->GetName();
-        bool found_mum = findMotherNode(world, daughter_name, mother_node);
-        if(not found_mum) {
-          throw cet::exception("BaseRadioGen") << "Didn't find the mum of the following node: " << daughter_name;
-        }
-        mother_nodes.push_back(mother_node);
-        current_node = mother_node;
-      }
-
-
-      TGeoVolume* vol   = node_to_throw->GetVolume();
-      TGeoShape*  shape = vol->GetShape();
-      TGeoBBox*   bbox  = (TGeoBBox*)shape;
-
-      double dx = bbox->GetDX();
-      double dy = bbox->GetDY();
-      double dz = bbox->GetDZ();
-
-      double halfs[3] = { dx, dy, dz };
-      double posmin[3] = {  1.0e30,  1.0e30,  1.0e30 };
-      double posmax[3] = { -1.0e30, -1.0e30, -1.0e30 };
-
-      const double* origin = bbox->GetOrigin();
-      for ( int ix = -1; ix <= 1; ix += 2) {
-        for ( int iy = -1; iy <= 1; iy += 2) {
-          for ( int iz = -1; iz <= 1; iz += 2) {
-            double local[3];
-            local[0] = origin[0] + (double)ix*halfs[0];
-            local[1] = origin[1] + (double)iy*halfs[1];
-            local[2] = origin[2] + (double)iz*halfs[2];
-            double master[3];
-            node_to_throw->LocalToMaster(local,master);
-            for (auto const& mum: mother_nodes) {
-              local[0] = master[0];
-              local[1] = master[1];
-              local[2] = master[2];
-              mum->LocalToMaster(local, master);
-            }
-            for ( int j = 0; j < 3; ++j ) {
-              posmin[j] = TMath::Min(posmin[j],master[j]);
-              posmax[j] = TMath::Max(posmin[j],master[j]);
-            }
-          }
-        }
-      }
-
-      m_X0 = posmin[0];
-      m_Y0 = posmin[1];
-      m_Z0 = posmin[2];
-      m_X1 = posmax[0];
-      m_Y1 = posmax[1];
-      m_Z1 = posmax[2];
-    }
-
 
     m_random_flat    = std::make_unique<CLHEP::RandFlat   >(m_engine);
     m_random_poisson = std::make_unique<CLHEP::RandPoisson>(m_engine);
@@ -288,12 +283,16 @@ namespace evgen {
         std::string volume_name = volume->GetName();
         bool good = std::regex_match(volume_name, m_regex_volume);
         if (good) {
-          std::cout << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
-          if (volume->GetShape()->TestShapeBits(TGeoShape::kGeoBox)) {
-            TGeoBBox* box = dynamic_cast<TGeoBBox*>(volume->GetShape());
-            if (box)
-              std::cout << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
+          
+          if (m_volume_gen != ".*") {
+            std::cout << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
+            if (volume->GetShape()->TestShapeBits(TGeoShape::kGeoBox)) {
+              TGeoBBox* box = dynamic_cast<TGeoBBox*>(volume->GetShape());
+              if (box)
+                std::cout << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
+            }
           }
+          
           m_good_volumes.push_back(volume);
         }
       }
@@ -304,34 +303,58 @@ namespace evgen {
         bool good = std::regex_match(material_name, m_regex_material);
         if (good) m_good_materials.push_back(material);
       }
-      
-      FillAllNodes(gGeoManager->GetTopNode());
-      size_t n_nodes = 0;
-      m_volume_cc = 0;
-      
-      for (auto const& node: m_all_nodes) {
-        auto volume   = node->GetVolume();
-        auto material = node->GetMedium()->GetMaterial();
-        
-        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
-        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
-        
-        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-        n_nodes+=good;
-        if (good)
-          m_volume_cc += volume->GetShape()->Capacity();
-        
-      }
-      std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
-      std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
-      std::cout << n_nodes << " nodes (i.e. instance of the volumes) correspond to the both the regexes.\n";
-      
-      if (n_nodes==0) 
-        throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
-      
-      std::cout << "This amounts to " << m_volume_cc << " cm^3 for the all the volumes where the decays are going to generated.\n";
     }
+    std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
+    std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
+    
+    double dummy;
+    if (pset.get_if_present<double>("X0", dummy) or
+        pset.get_if_present<double>("X1", dummy) or
+        pset.get_if_present<double>("Y0", dummy) or
+        pset.get_if_present<double>("Y1", dummy) or
+        pset.get_if_present<double>("Z0", dummy) or
+        pset.get_if_present<double>("Z1", dummy)) {
+      /// If we specified X, Y, Z we will throw with what the user provided
+      /// This will throw an error if somebody specifies only one X0.
+      
+      m_geo_volume_mode = false;
+      m_volume_rand_present = false;
+      
+      m_X0 = pset.get<double>("X0");
+      m_Y0 = pset.get<double>("Y0");
+      m_Z0 = pset.get<double>("Z0");
+      m_X1 = pset.get<double>("X1");
+      m_Y1 = pset.get<double>("Y1");
+      m_Z1 = pset.get<double>("Z1");
 
+      CalculateActiveVolumeFromXYZ();
+      
+      
+    } else {
+      const TGeoNode* world = gGeoManager->GetNode(0);
+
+      if (pset.get_if_present<std::string>("volume_rand", m_volume_rand)) {
+        m_geo_volume_mode = false;
+        m_volume_rand_present = true;
+
+        /// If we specified volume_rand we will throw with what the coordinates of the volume
+        const TGeoNode* node = nullptr;
+        findNode(world, m_volume_rand, node);
+        GetNodeXYZMinMax(node, world,
+                         m_X0, m_X1,
+                         m_Y0, m_Y1,
+                         m_Z0, m_Z1);
+
+        CalculateActiveVolumeFromXYZ();
+        
+      } else {
+        /// Else we throw in the whole geometry but only in the nodes who have the specified volume/material
+        m_geo_volume_mode = true;
+        m_volume_rand_present = false;
+        CalculateActiveVolumeFromAllNodes();
+      }
+    }
+      
     m_flat_distrib_xpos = pset.get<double>("flat_distribution_x", 1);
     m_flat_distrib_ypos = pset.get<double>("flat_distribution_y", 1);
     m_flat_distrib_zpos = pset.get<double>("flat_distribution_z", 1);
@@ -348,7 +371,83 @@ namespace evgen {
     if (not m_flat_distrib_zpos) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
 
   }
+  
+  void BaseRadioGen::CalculateActiveVolumeFromAllNodes() {
+    FillAllNodes(gGeoManager->GetTopNode());
+    m_volume_cc = 0;
+      
+    for (auto const& node: m_all_nodes) {
+      auto volume   = node->GetVolume();
+      auto material = node->GetMedium()->GetMaterial();
+        
+      auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
+      auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
+        
+      bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
+        
+      if (good) {
+        double capa = volume->GetShape()->Capacity();
+        m_volume_cc += capa;
+        m_good_nodes[node] = m_volume_cc; 
+      }
+        
+    }
+    std::cout << m_good_nodes    .size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
+      
+    if (m_good_nodes.size()==0) 
+      throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
+  }
+  
+  void BaseRadioGen::CalculateActiveVolumeFromXYZ() {
+    
+    m_volume_cc = (m_X1 - m_X0)*(m_Y1 - m_Y0)*(m_Z1 - m_Z0);
+    
+    if (m_material != ".*" || m_volume_gen != ".*") {
+      std::cout << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
+      size_t nfound=0;
+      size_t ntries=0;
+      
+      double xyz[3];
+      TGeoNode* node = nullptr;
 
+      while (nfound<m_target_n_point_rate_calculation and ntries<m_max_tries_rate_calculation) {
+        ntries++;
+        node = nullptr;
+        xyz[0] = m_X0 + (m_X1 - m_X0) * m_random_flat->fire(0, 1.);
+        xyz[1] = m_Y0 + (m_Y1 - m_Y0) * m_random_flat->fire(0, 1.);
+        xyz[2] = m_Z0 + (m_Z1 - m_Z0) * m_random_flat->fire(0, 1.);
+        m_geo_manager->SetCurrentPoint(xyz);
+        node = m_geo_manager->FindNode();
+        if (!node) continue;
+        if (node->IsOverlapping()) continue;
+
+        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), node->GetMedium()->GetMaterial());
+        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), node->GetVolume());
+        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
+
+        if (!good) continue;
+        nfound++;
+      }
+
+      if (nfound==0) {
+        throw cet::exception("BaseRadioGen") << "Didn't find the material " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n"
+                                             << "Position of the box:\n"
+                                             << m_X0 << " " << m_X1 <<"\n"
+                                             << m_Y0 << " " << m_Y1 <<"\n"
+                                             << m_Z0 << " " << m_Z1 <<"\n";
+      }
+
+      double proportion = (double) nfound / ntries;
+      double proportion_error = proportion*sqrt(1. / nfound + 1. / ntries);
+      m_volume_cc *= proportion;
+
+      std::cout << "There is " << proportion*100. << "% (+/- " << proportion_error*100. << "%) of " << m_material << " and " << m_volume_gen << " in the specified volume ("
+                << 100.*proportion_error/proportion << "% relat. uncert.).\n"
+                << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=100,000) in your fhicl.\n\n\n";
+    }
+  }
+
+  
   void BaseRadioGen::produce(art::Event& evt) {
     m_nevent++;
     produce_radio(evt);
@@ -390,44 +489,111 @@ namespace evgen {
 
   bool BaseRadioGen::GetGoodPositionTime(TLorentzVector& position) {
 
+    /// Deal with the time first
     double time = m_T0 + m_random_flat->fire()*(m_T1 - m_T0);
-    size_t ntries=0;
+
     
-    while (ntries++<m_max_tries_event) {
+    if (not m_geo_volume_mode) {
+      /// We use all the XYZ that have been set earlier, until we find the correct volume and material
+      
+      size_t n_tries=0;
+    
       double xpos = std::numeric_limits<double>::signaling_NaN();
       double ypos = std::numeric_limits<double>::signaling_NaN();
       double zpos = std::numeric_limits<double>::signaling_NaN();
       
-      if (m_flat_distrib_xpos) xpos = m_X0 + m_random_flat->fire()*(m_X1 - m_X0);
-      else                     xpos = m_distrib_xpos->GetRandom();
+      while (n_tries++<m_max_tries_event) {
+      
+        if (m_flat_distrib_xpos) xpos = m_X0 + m_random_flat->fire()*(m_X1 - m_X0);
+        else                     xpos = m_distrib_xpos->GetRandom(m_X0, m_X1);
+      
+        if (m_flat_distrib_ypos) ypos = m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0);
+        else                     ypos = m_distrib_ypos->GetRandom(m_Y0, m_Y1);
+      
+        if (m_flat_distrib_zpos) zpos = m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0);
+        else                     zpos = m_distrib_zpos->GetRandom(m_Z0, m_Z1);
 
-      if (m_flat_distrib_ypos) ypos = m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0);
-      else                     ypos = m_distrib_ypos->GetRandom();
-
-      if (m_flat_distrib_zpos) zpos = m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0);
-      else                     zpos = m_distrib_zpos->GetRandom();
-
+        auto node = gGeoManager->FindNode(xpos, ypos, zpos);
+        auto volume   = node->GetVolume();
+        auto material = node->GetMedium()->GetMaterial();
+        
+        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
+        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
+        
+        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
+        
+        if (good) break;
+      }
+      
       if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
         MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
       }
-        
+      
       position.SetXYZT(xpos, ypos, zpos, time);
+      return true;
       
-      if (not m_geo_volume_mode)
-        return true;
-      
-      const TGeoNode* node = m_geo_manager->FindNode(position.X(),position.Y(),position.Z());
-      TGeoMaterial* material = node->GetMedium()->GetMaterial();
-      TGeoVolume  * volume   = node->GetVolume();
-      auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
-      auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
-      bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-      
-      if (good) return true;
-    }
-    return false;
-  }
+    } else {
+      /// We use the list of nodes
 
+      if (m_good_nodes.empty() or m_volume_cc == 0)
+        MF_LOG_ERROR("BaseRadioGen") << "There is no node to throw events in!";
+      
+      double which_vol = m_random_flat->fire()*m_volume_cc;
+    
+      const TGeoNode* node = nullptr;
+      size_t i=0;
+      
+      for (auto const& nd: m_good_nodes) {
+        if (which_vol < nd.second) {
+          node = nd.first;
+          break;
+        }
+        i++;
+      }
+    
+      const TGeoNode* world = gGeoManager->GetNode(0);
+      double x_min, x_max;
+      double y_min, y_max;
+      double z_min, z_max;
+      GetNodeXYZMinMax(node, world,
+                       x_min, x_max,
+                       y_min, y_max,
+                       z_min, z_max);
+      
+      size_t n_tries=0;
+      
+
+      while (n_tries++<m_max_tries_event) {
+        double xpos = std::numeric_limits<double>::signaling_NaN();
+        double ypos = std::numeric_limits<double>::signaling_NaN();
+        double zpos = std::numeric_limits<double>::signaling_NaN();
+        
+        if (m_flat_distrib_xpos) xpos = x_min + m_random_flat->fire()*(x_max - x_min);
+        else                     xpos = m_distrib_xpos->GetRandom(x_min, x_max);
+      
+        if (m_flat_distrib_ypos) ypos = y_min + m_random_flat->fire()*(y_max - y_min);
+        else                     ypos = m_distrib_ypos->GetRandom(y_min, y_max);
+      
+        if (m_flat_distrib_zpos) zpos = z_min + m_random_flat->fire()*(z_max - z_min);
+        else                     zpos = m_distrib_zpos->GetRandom(z_min, z_max);
+
+        if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
+          MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
+        }
+        position.SetXYZT(xpos, ypos, zpos, time);
+      
+        const TGeoNode* node_generated = gGeoManager->FindNode(xpos, ypos, zpos);
+        if (node_generated == node)
+          return true;
+      
+        if (node->GetNdaughters() and IsDaughterNode(node_generated, node))
+          return true;
+      }
+    }
+    
+    return false;
+    
+  }
 
   //____________________________________________________________________________
   // Generate radioactive decays per isotope per volume according to the FCL parameters
@@ -441,6 +607,27 @@ namespace evgen {
       return n_ev;
     }
 
+  }
+
+  bool BaseRadioGen::IsDaughterNode(const TGeoNode* daughter_node, const TGeoNode* mother_node) {
+    if (mother_node == daughter_node)
+      return true;
+
+    TObjArray* daunodes = mother_node->GetNodes();
+    if (!daunodes)
+      return false;
+    
+    TIter next(daunodes);
+    const TGeoNode* anode = 0;
+    
+    while ( (anode = (const TGeoNode*)next()) ) {
+      bool found = IsDaughterNode(daughter_node,anode);
+      if (found)
+        return true;
+    }
+
+    return false;
+    
   }
   
   void BaseRadioGen::FillAllNodes(const TGeoNode* curnode) {
