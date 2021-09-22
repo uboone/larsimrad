@@ -385,16 +385,12 @@ namespace evgen {
       }
     }
 
-    m_distrib_xpos = nullptr;
-    m_distrib_ypos = nullptr;
-    m_distrib_zpos = nullptr;
-
     auto rand = CLHEP::RandFlat(m_engine);
     gRandom->SetSeed(rand.fireInt(std::numeric_limits<long>::max()));
 
     if (pset.has_key("distrib_x")) m_distrib_xpos = new TF1("distrib_x", pset.get<std::string>("distrib_x").c_str(), m_X0, m_X1);
-    if (pset.has_key("distrib_x")) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
-    if (pset.has_key("distrib_x")) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
+    if (pset.has_key("distrib_y")) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
+    if (pset.has_key("distrib_z")) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
 
   }
 
