@@ -394,7 +394,7 @@ namespace evgen {
     }
     MF_LOG_INFO("BaseRadioGen") << m_good_nodes.size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
       
-    if (m_good_nodes.size()==0) 
+    if (empty(m_good_nodes))
       throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
   }
   
