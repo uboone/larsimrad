@@ -271,7 +271,7 @@ namespace evgen {
     m_random_poisson = std::make_unique<CLHEP::RandPoisson>(m_engine);
 
     if (m_material != ".*" || m_volume_gen != ".*") {
-      std::cout << "Calculating the volume of " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
+      MF_LOG_INFO("BaseRadioGen") << "Calculating the volume of " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
       
       double xyz[3];
 
@@ -285,11 +285,11 @@ namespace evgen {
         if (good) {
           
           if (m_volume_gen != ".*") {
-            std::cout << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
+            MF_LOG_INFO("BaseRadioGen") << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
             if (volume->GetShape()->TestShapeBits(TGeoShape::kGeoBox)) {
               TGeoBBox* box = dynamic_cast<TGeoBBox*>(volume->GetShape());
               if (box)
-                std::cout << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
+                MF_LOG_INFO("BaseRadioGen") << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
             }
           }
           
@@ -304,8 +304,8 @@ namespace evgen {
         if (good) m_good_materials.push_back(material);
       }
     }
-    std::cout << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
-    std::cout << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
+    MF_LOG_INFO("BaseRadioGen") << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
+    MF_LOG_INFO("BaseRadioGen") << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
     
     double dummy;
     if (pset.get_if_present<double>("X0", dummy) or
@@ -392,7 +392,7 @@ namespace evgen {
       }
         
     }
-    std::cout << m_good_nodes    .size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
+    MF_LOG_INFO("BaseRadioGen") << m_good_nodes.size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
       
     if (m_good_nodes.size()==0) 
       throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
@@ -403,7 +403,7 @@ namespace evgen {
     m_volume_cc = (m_X1 - m_X0)*(m_Y1 - m_Y0)*(m_Z1 - m_Z0);
     
     if (m_material != ".*" || m_volume_gen != ".*") {
-      std::cout << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
+      MF_LOG_INFO("BaseRadioGen") << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
       size_t nfound=0;
       size_t ntries=0;
       
@@ -441,9 +441,9 @@ namespace evgen {
       double proportion_error = proportion*sqrt(1. / nfound + 1. / ntries);
       m_volume_cc *= proportion;
 
-      std::cout << "There is " << proportion*100. << "% (+/- " << proportion_error*100. << "%) of " << m_material << " and " << m_volume_gen << " in the specified volume ("
-                << 100.*proportion_error/proportion << "% relat. uncert.).\n"
-                << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=100,000) in your fhicl.\n\n\n";
+      MF_LOG_INFO("BaseRadioGen") << "There is " << proportion*100. << "% (+/- " << proportion_error*100. << "%) of " << m_material << " and " << m_volume_gen << " in the specified volume ("
+                                  << 100.*proportion_error/proportion << "% relat. uncert.).\n"
+                                  << "If the uncertainty is too big, crank up the parameters \"max_tries_rate_calculation\" (default=40,000,000) and/or \"target_n_point_rate_calculation\" (default=100,000) in your fhicl.\n\n\n";
     }
   }
 
