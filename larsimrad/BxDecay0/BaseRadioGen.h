@@ -16,6 +16,8 @@
 #include <TGeoMaterial.h>
 #include <TGeoNode.h>
 
+#include "cetlib/container_algorithms.h"
+
 // Framework includes
 #include "art/Framework/Core/EDProducer.h"
 #include "art/Framework/Principal/Event.h"
@@ -106,6 +108,7 @@ namespace evgen {
                   const TGeoNode* & targetnode);
     bool findMotherNode(const TGeoNode* cur_node, std::string& daughter_name,
                         const TGeoNode* & mother_node);
+    bool NodeSupported(TGeoNode const* node) const;
 
     std::string m_material;    ///< regex of materials in which to generate the decays.  Example: "LAr"
     std::string m_volume_rand; ///< The volume in which to generate the decays
@@ -164,6 +167,11 @@ namespace evgen {
     TH1D* m_pdg_TH1D;
   };
 
+  bool BaseRadioGen::NodeSupported(const TGeoNode* node) const {
+    assert(node != nullptr);
+    return cet::search_all(m_good_volumes, node->GetVolume()) and
+           cet::search_all(m_good_materials, node->GetMedium()->GetMaterial());
+  }
   
   void BaseRadioGen::GetNodeXYZMinMax(const TGeoNode* from, const TGeoNode* to,
                                       double& x_min, double &x_max,
@@ -377,21 +385,13 @@ namespace evgen {
     m_volume_cc = 0;
       
     for (auto const& node: m_all_nodes) {
-      auto volume   = node->GetVolume();
-      auto material = node->GetMedium()->GetMaterial();
-        
-      auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
-      auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
-        
-      bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-        
-      if (good) {
-        double capa = volume->GetShape()->Capacity();
-        m_volume_cc += capa;
-        m_good_nodes[node] = m_volume_cc; 
-      }
-        
+      if (not NodeSupported(node)) continue;
+      
+      double capa = node->GetVolume()->GetShape()->Capacity();
+      m_volume_cc += capa;
+      m_good_nodes[node] = m_volume_cc; 
     }
+    
     MF_LOG_INFO("BaseRadioGen") << m_good_nodes.size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
       
     if (empty(m_good_nodes))
@@ -421,11 +421,8 @@ namespace evgen {
         if (!node) continue;
         if (node->IsOverlapping()) continue;
 
-        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), node->GetMedium()->GetMaterial());
-        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), node->GetVolume());
-        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-
-        if (!good) continue;
+        
+        if (!NodeSupported(node)) continue;
         nfound++;
       }
 
@@ -514,15 +511,8 @@ namespace evgen {
         else                     zpos = m_distrib_zpos->GetRandom(m_Z0, m_Z1);
 
         auto node = gGeoManager->FindNode(xpos, ypos, zpos);
-        auto volume   = node->GetVolume();
-        auto material = node->GetMedium()->GetMaterial();
         
-        auto good_vol = std::find(m_good_volumes  .begin(), m_good_volumes  .end(), volume  );
-        auto good_mat = std::find(m_good_materials.begin(), m_good_materials.end(), material);
-        
-        bool good = good_mat != m_good_materials.end() and good_vol != m_good_volumes.end();
-        
-        if (good) break;
+        if (NodeSupported(node)) break;
       }
       
       if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
