@@ -130,7 +130,7 @@ namespace evgen {
 
     art::ServiceHandle<geo::Geometry const> m_geo_service;
     TGeoManager* m_geo_manager;
-    
+
     CLHEP::HepRandomEngine& m_engine;
     CLHEP::RandFlat    m_random_flat;
     CLHEP::RandPoisson m_random_poisson;
@@ -138,11 +138,11 @@ namespace evgen {
     bool m_geo_volume_mode;
     bool m_rate_mode;
     bool m_volume_rand_present;
-    
+
     size_t m_max_tries_event;
     size_t m_max_tries_rate_calculation;
     size_t m_target_n_point_rate_calculation;
-    
+
     std::map<const TGeoNode*,double> m_good_nodes     = {};
     std::vector<const TGeoVolume  *> m_good_volumes   = {};
     std::vector<const TGeoMaterial*> m_good_materials = {};
@@ -168,12 +168,12 @@ namespace evgen {
     return cet::search_all(m_good_volumes, node->GetVolume()) and
            cet::search_all(m_good_materials, node->GetMedium()->GetMaterial());
   }
-  
+
   void BaseRadioGen::GetNodeXYZMinMax(const TGeoNode* from, const TGeoNode* to,
                                       double& x_min, double &x_max,
                                       double& y_min, double& y_max,
                                       double& z_min, double& z_max) {
-    
+
     std::vector<const TGeoNode*> mother_nodes;
     const TGeoNode* current_node=from;
     std::string daughter_name = from->GetName();
@@ -226,7 +226,7 @@ namespace evgen {
         }
       }
     }
-      
+
     x_min = posmin[0];
     y_min = posmin[1];
     z_min = posmin[2];
@@ -234,7 +234,7 @@ namespace evgen {
     y_max = posmax[1];
     z_max = posmax[2];
   }
-  
+
   BaseRadioGen::BaseRadioGen(fhicl::ParameterSet const& pset):
     EDProducer{pset},
     m_material   {pset.get<std::string>("material"  , ".*")},
@@ -262,7 +262,7 @@ namespace evgen {
     m_geo_volume_mode{false},
     m_rate_mode      {pset.has_key("rate")},
     m_volume_rand_present{pset.has_key("volume_rand")},
-  
+
     m_max_tries_event{pset.get<size_t>("max_tries_event", 1'000'000)},
     m_max_tries_rate_calculation{pset.get<size_t>("max_tries_rate_calculation", 40'000'000)},
     m_target_n_point_rate_calculation{pset.get<size_t>("target_n_point_rate_calculation", 100'000)},
@@ -308,18 +308,16 @@ namespace evgen {
 
     if (m_material != ".*" || m_volume_gen != ".*") {
       MF_LOG_INFO("BaseRadioGen") << "Calculating the volume of " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
-      
-      double xyz[3];
 
       TObjArray* volumes   = m_geo_manager->GetListOfVolumes();
       TList    * materials = m_geo_manager->GetListOfMaterials();
-      
+
       for (int i=0; i<volumes->GetEntries(); ++i) {
         TGeoVolume* volume = (TGeoVolume*)volumes->At(i);
         std::string volume_name = volume->GetName();
         bool good = std::regex_match(volume_name, m_regex_volume);
         if (good) {
-          
+
           if (m_volume_gen != ".*") {
             MF_LOG_INFO("BaseRadioGen") << "  Volume " << volume_name << " is an accepted volume of " << volume->GetShape()->Capacity() << "cm^3.\n";
             if (volume->GetShape()->TestShapeBits(TGeoShape::kGeoBox)) {
@@ -328,11 +326,11 @@ namespace evgen {
                 MF_LOG_INFO("BaseRadioGen") << "  It is a box of size " << 2.*box->GetDX() << " x " << 2.*box->GetDY() << " x " << 2.*box->GetDZ() << " cm^3\n";
             }
           }
-          
+
           m_good_volumes.push_back(volume);
         }
       }
-      
+
       for (int i=0; i<materials->GetEntries(); ++i) {
         TGeoMaterial* material = (TGeoMaterial*)materials->At(i);
         std::string material_name = material->GetName();
@@ -342,16 +340,16 @@ namespace evgen {
     }
     MF_LOG_INFO("BaseRadioGen") << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
     MF_LOG_INFO("BaseRadioGen") << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
-    
+
     if (pset.has_key("X0") or pset.has_key("X1") or
         pset.has_key("Y0") or pset.has_key("Y1") or
         pset.has_key("Z0") or pset.has_key("Z1")) {
       /// If we specified X, Y, Z we will throw with what the user provided
       /// This will throw an error if somebody specifies only one X0.
-      
+
       m_geo_volume_mode = false;
       m_volume_rand_present = false;
-      
+
       m_X0 = pset.get<double>("X0");
       m_Y0 = pset.get<double>("Y0");
       m_Z0 = pset.get<double>("Z0");
@@ -360,8 +358,8 @@ namespace evgen {
       m_Z1 = pset.get<double>("Z1");
 
       CalculateActiveVolumeFromXYZ();
-      
-      
+
+
     } else {
       const TGeoNode* world = gGeoManager->GetNode(0);
 
@@ -378,7 +376,7 @@ namespace evgen {
                          m_Z0, m_Z1);
 
         CalculateActiveVolumeFromXYZ();
-        
+
       } else {
         /// Else we throw in the whole geometry but only in the nodes who have the specified volume/material
         m_geo_volume_mode = true;
@@ -386,47 +384,47 @@ namespace evgen {
         CalculateActiveVolumeFromAllNodes();
       }
     }
-      
+
     m_distrib_xpos = nullptr;
     m_distrib_ypos = nullptr;
     m_distrib_zpos = nullptr;
 
     auto rand = CLHEP::RandFlat(m_engine);
     gRandom->SetSeed(rand.fireInt(std::numeric_limits<long>::max()));
-    
+
     if (pset.has_key("distrib_x")) m_distrib_xpos = new TF1("distrib_x", pset.get<std::string>("distrib_x").c_str(), m_X0, m_X1);
     if (pset.has_key("distrib_x")) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
     if (pset.has_key("distrib_x")) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
 
   }
-  
+
   void BaseRadioGen::CalculateActiveVolumeFromAllNodes() {
     FillAllNodes(gGeoManager->GetTopNode());
     m_volume_cc = 0;
-      
+
     for (auto const& node: m_all_nodes) {
       if (not NodeSupported(node)) continue;
-      
+
       double capa = node->GetVolume()->GetShape()->Capacity();
       m_volume_cc += capa;
-      m_good_nodes[node] = m_volume_cc; 
+      m_good_nodes[node] = m_volume_cc;
     }
-    
+
     MF_LOG_INFO("BaseRadioGen") << m_good_nodes.size() << " nodes (i.e. instance of the volumes) satisfy both the regexes.\n";
-      
+
     if (empty(m_good_nodes))
       throw cet::exception("BaseRadioGen") << "Didn't find an instance of material " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
   }
-  
+
   void BaseRadioGen::CalculateActiveVolumeFromXYZ() {
-    
+
     m_volume_cc = (m_X1 - m_X0)*(m_Y1 - m_Y0)*(m_Z1 - m_Z0);
-    
+
     if (m_material != ".*" || m_volume_gen != ".*") {
       MF_LOG_INFO("BaseRadioGen") << "Calculating the proportion of " << m_material << " and the volume " << m_volume_gen << " in the specified volume " << m_volume_rand << ".\n";
       size_t nfound=0;
       size_t ntries=0;
-      
+
       double xyz[3];
       TGeoNode* node = nullptr;
 
@@ -441,7 +439,7 @@ namespace evgen {
         if (!node) continue;
         if (node->IsOverlapping()) continue;
 
-        
+
         if (!NodeSupported(node)) continue;
         nfound++;
       }
@@ -464,7 +462,7 @@ namespace evgen {
     }
   }
 
-  
+
   void BaseRadioGen::produce(art::Event& evt) {
     m_nevent++;
     produce_radio(evt);
@@ -509,50 +507,50 @@ namespace evgen {
     /// Deal with the time first
     double time = m_T0 + m_random_flat.fire()*(m_T1 - m_T0);
 
-    
+
     if (not m_geo_volume_mode) {
       /// We use all the XYZ that have been set earlier, until we find the correct volume and material
-      
+
       size_t n_tries=0;
-    
+
       double xpos = std::numeric_limits<double>::signaling_NaN();
       double ypos = std::numeric_limits<double>::signaling_NaN();
       double zpos = std::numeric_limits<double>::signaling_NaN();
-      
+
       while (n_tries++<m_max_tries_event) {
-      
+
         if (m_distrib_xpos) xpos = m_distrib_xpos->GetRandom(m_X0, m_X1);
         else                xpos = m_X0 + m_random_flat.fire()*(m_X1 - m_X0);
-      
+
         if (m_distrib_ypos) ypos = m_distrib_ypos->GetRandom(m_Y0, m_Y1);
         else                ypos = m_Y0 + m_random_flat.fire()*(m_Y1 - m_Y0);
-      
+
         if (m_distrib_zpos) zpos = m_distrib_zpos->GetRandom(m_Z0, m_Z1);
         else                zpos = m_Z0 + m_random_flat.fire()*(m_Z1 - m_Z0);
 
         auto node = gGeoManager->FindNode(xpos, ypos, zpos);
-        
+
         if (NodeSupported(node)) break;
       }
-      
+
       if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
         MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
       }
-      
+
       position.SetXYZT(xpos, ypos, zpos, time);
       return true;
-      
+
     } else {
       /// We use the list of nodes
 
       if (m_good_nodes.empty() or m_volume_cc == 0)
         MF_LOG_ERROR("BaseRadioGen") << "There is no node to throw events in!";
-      
+
       double which_vol = m_random_flat.fire()*m_volume_cc;
-    
+
       const TGeoNode* node = nullptr;
       size_t i=0;
-      
+
       for (auto const& nd: m_good_nodes) {
         if (which_vol < nd.second) {
           node = nd.first;
@@ -560,7 +558,7 @@ namespace evgen {
         }
         i++;
       }
-    
+
       const TGeoNode* world = gGeoManager->GetNode(0);
       double x_min, x_max;
       double y_min, y_max;
@@ -569,21 +567,21 @@ namespace evgen {
                        x_min, x_max,
                        y_min, y_max,
                        z_min, z_max);
-      
+
       size_t n_tries=0;
-      
+
 
       while (n_tries++<m_max_tries_event) {
         double xpos = std::numeric_limits<double>::signaling_NaN();
         double ypos = std::numeric_limits<double>::signaling_NaN();
         double zpos = std::numeric_limits<double>::signaling_NaN();
-        
+
         if (m_distrib_xpos) xpos = m_distrib_xpos->GetRandom(x_min, x_max);
         else                xpos = x_min + m_random_flat.fire()*(x_max - x_min);
-      
+
         if (m_distrib_ypos) ypos = m_distrib_ypos->GetRandom(y_min, y_max);
         else                ypos = y_min + m_random_flat.fire()*(y_max - y_min);
-      
+
         if (m_distrib_zpos) zpos = m_distrib_zpos->GetRandom(z_min, z_max);
         else                zpos = z_min + m_random_flat.fire()*(z_max - z_min);
 
@@ -591,18 +589,18 @@ namespace evgen {
           MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
         }
         position.SetXYZT(xpos, ypos, zpos, time);
-      
+
         const TGeoNode* node_generated = gGeoManager->FindNode(xpos, ypos, zpos);
         if (node_generated == node)
           return true;
-      
+
         if (node->GetNdaughters() and IsDaughterNode(node_generated, node))
           return true;
       }
     }
-    
+
     return false;
-    
+
   }
 
   //____________________________________________________________________________
@@ -625,10 +623,10 @@ namespace evgen {
     TObjArray* daunodes = mother_node->GetNodes();
     if (!daunodes)
       return false;
-    
+
     TIter next(daunodes);
     const TGeoNode* anode = 0;
-    
+
     while ( (anode = (const TGeoNode*)next()) ) {
       bool found = IsDaughterNode(daughter_node,anode);
       if (found)
@@ -636,14 +634,14 @@ namespace evgen {
     }
 
     return false;
-    
+
   }
-  
+
   void BaseRadioGen::FillAllNodes(const TGeoNode* curnode) {
     if (!curnode) return;
     TObjArray* daunodes = curnode->GetNodes();
     if (!daunodes) return;
-  
+
     TIter next(daunodes);
 
     const TGeoNode* anode = 0;
@@ -652,7 +650,7 @@ namespace evgen {
       FillAllNodes(anode);
     }
   }
-  
+
   bool BaseRadioGen::findNode(const TGeoNode* curnode, std::string& tgtnname,
                               const TGeoNode* & targetnode)
   /// Shamelessly stolen from here: https://cdcvs.fnal.gov/redmine/attachments/6719/calc_bbox.C
