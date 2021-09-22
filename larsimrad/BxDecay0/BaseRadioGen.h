@@ -287,7 +287,6 @@ namespace evgen {
     m_pdg_TH1D{nullptr}
   {
 
-      
     produces<std::vector<simb::MCTruth>>();
     produces<sumdata::RunData, art::InRun>();
 
@@ -344,13 +343,9 @@ namespace evgen {
     MF_LOG_INFO("BaseRadioGen") << m_good_volumes  .size() << " volumes correspond to the regex \""   << m_volume_gen << "\".\n";
     MF_LOG_INFO("BaseRadioGen") << m_good_materials.size() << " materials correspond to the regex \"" << m_material   << "\".\n";
     
-    double dummy;
-    if (pset.get_if_present<double>("X0", dummy) or
-        pset.get_if_present<double>("X1", dummy) or
-        pset.get_if_present<double>("Y0", dummy) or
-        pset.get_if_present<double>("Y1", dummy) or
-        pset.get_if_present<double>("Z0", dummy) or
-        pset.get_if_present<double>("Z1", dummy)) {
+    if (pset.has_key("X0") or pset.has_key("X1") or
+        pset.has_key("Y0") or pset.has_key("Y1") or
+        pset.has_key("Z0") or pset.has_key("Z1")) {
       /// If we specified X, Y, Z we will throw with what the user provided
       /// This will throw an error if somebody specifies only one X0.
       
