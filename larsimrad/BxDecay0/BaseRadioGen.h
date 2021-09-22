@@ -603,8 +603,7 @@ namespace evgen {
       return m_random_poisson->fire(m_rate);
     } else {
       double rate = abs(m_Bq * (m_T1-m_T0) * m_volume_cc / 1.0E9);
-      int n_ev = m_random_poisson->fire(rate);
-      return n_ev;
+      return m_random_poisson->fire(rate);
     }
 
   }
