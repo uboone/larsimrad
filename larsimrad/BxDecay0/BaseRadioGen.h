@@ -113,6 +113,8 @@ namespace evgen {
     std::string m_material;    ///< regex of materials in which to generate the decays.  Example: "LAr"
     std::string m_volume_rand; ///< The volume in which to generate the decays
     std::string m_volume_gen;  ///< The volume in which to generate the decays
+    std::regex  m_regex_material;
+    std::regex  m_regex_volume;
     double      m_Bq;          ///< Radioactivity in Becquerels (decay per sec) per cubic cm.
     double      m_rate;        ///< Radioactivity in Becquerels (decay per sec) use either of this of Bq
     double      m_T0;          ///< Beginning of time window to simulate in ns
@@ -123,15 +125,15 @@ namespace evgen {
     double      m_X1;          ///< Top corner x position (cm) in world coordinates
     double      m_Y1;          ///< Top corner y position (cm) in world coordinates
     double      m_Z1;          ///< Top corner z position (cm) in world coordinates
-
-    art::ServiceHandle<geo::Geometry const> m_geo_service;
-    CLHEP::HepRandomEngine& m_engine;
-
-    TGeoManager* m_geo_manager;
     double m_volume_cc;
 
-    std::unique_ptr<CLHEP::RandFlat   > m_random_flat;
-    std::unique_ptr<CLHEP::RandPoisson> m_random_poisson;
+
+    art::ServiceHandle<geo::Geometry const> m_geo_service;
+    TGeoManager* m_geo_manager;
+    
+    CLHEP::HepRandomEngine& m_engine;
+    CLHEP::RandFlat    m_random_flat;
+    CLHEP::RandPoisson m_random_poisson;
 
     bool m_geo_volume_mode;
     bool m_rate_mode;
@@ -141,16 +143,10 @@ namespace evgen {
     size_t m_max_tries_rate_calculation;
     size_t m_target_n_point_rate_calculation;
     
-    std::regex  m_regex_material;
-    std::regex  m_regex_volume;
     std::map<const TGeoNode*,double> m_good_nodes     = {};
     std::vector<const TGeoVolume  *> m_good_volumes   = {};
     std::vector<const TGeoMaterial*> m_good_materials = {};
 
-    
-    bool  m_flat_distrib_xpos;
-    bool  m_flat_distrib_ypos;
-    bool  m_flat_distrib_zpos;
     TF1* m_distrib_xpos;
     TF1* m_distrib_ypos;
     TF1* m_distrib_zpos;
@@ -240,23 +236,60 @@ namespace evgen {
   }
   
   BaseRadioGen::BaseRadioGen(fhicl::ParameterSet const& pset):
-    EDProducer(pset),
-    m_engine(art::ServiceHandle<rndm::NuRandomService>()->createEngine(*this, "HepJamesRandom", "BaseRadioGen", pset, "SeedBaseRadioGen")) {
+    EDProducer{pset},
+    m_material   {pset.get<std::string>("material"  , ".*")},
+    m_volume_rand{""},
+    m_volume_gen {pset.get<std::string>("volume_gen", ".*")},
+    m_regex_material{(std::regex)m_material  },
+    m_regex_volume  {(std::regex)m_volume_gen},
+    m_Bq  {std::numeric_limits<double>::signaling_NaN()},
+    m_rate{std::numeric_limits<double>::signaling_NaN()},
+    m_T0  {std::numeric_limits<double>::signaling_NaN()},
+    m_T1  {std::numeric_limits<double>::signaling_NaN()},
+    m_X0  {std::numeric_limits<double>::signaling_NaN()},
+    m_Y0  {std::numeric_limits<double>::signaling_NaN()},
+    m_Z0  {std::numeric_limits<double>::signaling_NaN()},
+    m_X1  {std::numeric_limits<double>::signaling_NaN()},
+    m_Y1  {std::numeric_limits<double>::signaling_NaN()},
+    m_Z1  {std::numeric_limits<double>::signaling_NaN()},
+    m_volume_cc{std::numeric_limits<double>::signaling_NaN()},
+    m_geo_manager(m_geo_service->ROOTGeoManager()),
 
-    m_nevent=0;
+    m_engine(art::ServiceHandle<rndm::NuRandomService>()->createEngine(*this, "HepJamesRandom", "BaseRadioGen", pset, "SeedBaseRadioGen")),
+    m_random_flat   {m_engine},
+    m_random_poisson{m_engine},
 
+    m_geo_volume_mode{false},
+    m_rate_mode      {pset.has_key("rate")},
+    m_volume_rand_present{pset.has_key("volume_rand")},
+  
+    m_max_tries_event{pset.get<size_t>("max_tries_event", 1'000'000)},
+    m_max_tries_rate_calculation{pset.get<size_t>("max_tries_rate_calculation", 40'000'000)},
+    m_target_n_point_rate_calculation{pset.get<size_t>("target_n_point_rate_calculation", 100'000)},
+
+    m_good_nodes    {},
+    m_good_volumes  {},
+    m_good_materials{},
+
+    m_distrib_xpos{nullptr},
+    m_distrib_ypos{nullptr},
+    m_distrib_zpos{nullptr},
+
+    m_nevent{0},
+    m_pos_xy_TH2D{},
+    m_pos_xz_TH2D{},
+    m_dir_x_TH1D{},
+    m_dir_y_TH1D{},
+    m_dir_z_TH1D{},
+    m_mom_TH1D{},
+    m_ke_TH1D{},
+    m_time_TH1D{},
+    m_pdg_TH1D{nullptr}
+  {
+
+      
     produces<std::vector<simb::MCTruth>>();
     produces<sumdata::RunData, art::InRun>();
-
-    m_max_tries_event = pset.get<size_t>("max_tries_event", 1'000'000);
-    m_max_tries_rate_calculation = pset.get<size_t>("max_tries_rate_calculation", 40'000'000);
-    m_target_n_point_rate_calculation = pset.get<size_t>("target_n_point_rate_calculation", 100'000);
-    
-    m_material = pset.get<std::string>("material", ".*");
-    m_regex_material = (std::regex)m_material;
-
-    m_volume_gen = pset.get<std::string>("volume_gen", ".*");
-    m_regex_volume = (std::regex)m_volume_gen;
 
     m_rate_mode = pset.get_if_present<double>("rate", m_rate);
     if (not m_rate_mode)
@@ -273,10 +306,6 @@ namespace evgen {
       m_T1 = -m_T0;
     }
 
-    m_geo_manager = m_geo_service->ROOTGeoManager();
-
-    m_random_flat    = std::make_unique<CLHEP::RandFlat   >(m_engine);
-    m_random_poisson = std::make_unique<CLHEP::RandPoisson>(m_engine);
 
     if (m_material != ".*" || m_volume_gen != ".*") {
       MF_LOG_INFO("BaseRadioGen") << "Calculating the volume of " << m_material << " and the volume " << m_volume_gen << " in the geometry.\n";
@@ -363,10 +392,6 @@ namespace evgen {
       }
     }
       
-    m_flat_distrib_xpos = pset.get<double>("flat_distribution_x", 1);
-    m_flat_distrib_ypos = pset.get<double>("flat_distribution_y", 1);
-    m_flat_distrib_zpos = pset.get<double>("flat_distribution_z", 1);
-
     m_distrib_xpos = nullptr;
     m_distrib_ypos = nullptr;
     m_distrib_zpos = nullptr;
@@ -374,9 +399,9 @@ namespace evgen {
     auto rand = CLHEP::RandFlat(m_engine);
     gRandom->SetSeed(rand.fireInt(std::numeric_limits<long>::max()));
     
-    if (not m_flat_distrib_xpos) m_distrib_xpos = new TF1("distrib_x", pset.get<std::string>("distrib_x").c_str(), m_X0, m_X1);
-    if (not m_flat_distrib_ypos) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
-    if (not m_flat_distrib_zpos) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
+    if (pset.has_key("distrib_x")) m_distrib_xpos = new TF1("distrib_x", pset.get<std::string>("distrib_x").c_str(), m_X0, m_X1);
+    if (pset.has_key("distrib_x")) m_distrib_ypos = new TF1("distrib_y", pset.get<std::string>("distrib_y").c_str(), m_Y0, m_Y1);
+    if (pset.has_key("distrib_x")) m_distrib_zpos = new TF1("distrib_z", pset.get<std::string>("distrib_z").c_str(), m_Z0, m_Z1);
 
   }
   
@@ -413,9 +438,9 @@ namespace evgen {
       while (nfound<m_target_n_point_rate_calculation and ntries<m_max_tries_rate_calculation) {
         ntries++;
         node = nullptr;
-        xyz[0] = m_X0 + (m_X1 - m_X0) * m_random_flat->fire(0, 1.);
-        xyz[1] = m_Y0 + (m_Y1 - m_Y0) * m_random_flat->fire(0, 1.);
-        xyz[2] = m_Z0 + (m_Z1 - m_Z0) * m_random_flat->fire(0, 1.);
+        xyz[0] = m_X0 + (m_X1 - m_X0) * m_random_flat.fire(0, 1.);
+        xyz[1] = m_Y0 + (m_Y1 - m_Y0) * m_random_flat.fire(0, 1.);
+        xyz[2] = m_Z0 + (m_Z1 - m_Z0) * m_random_flat.fire(0, 1.);
         m_geo_manager->SetCurrentPoint(xyz);
         node = m_geo_manager->FindNode();
         if (!node) continue;
@@ -487,7 +512,7 @@ namespace evgen {
   bool BaseRadioGen::GetGoodPositionTime(TLorentzVector& position) {
 
     /// Deal with the time first
-    double time = m_T0 + m_random_flat->fire()*(m_T1 - m_T0);
+    double time = m_T0 + m_random_flat.fire()*(m_T1 - m_T0);
 
     
     if (not m_geo_volume_mode) {
@@ -501,14 +526,14 @@ namespace evgen {
       
       while (n_tries++<m_max_tries_event) {
       
-        if (m_flat_distrib_xpos) xpos = m_X0 + m_random_flat->fire()*(m_X1 - m_X0);
-        else                     xpos = m_distrib_xpos->GetRandom(m_X0, m_X1);
+        if (m_distrib_xpos) xpos = m_distrib_xpos->GetRandom(m_X0, m_X1);
+        else                xpos = m_X0 + m_random_flat.fire()*(m_X1 - m_X0);
       
-        if (m_flat_distrib_ypos) ypos = m_Y0 + m_random_flat->fire()*(m_Y1 - m_Y0);
-        else                     ypos = m_distrib_ypos->GetRandom(m_Y0, m_Y1);
+        if (m_distrib_ypos) ypos = m_distrib_ypos->GetRandom(m_Y0, m_Y1);
+        else                ypos = m_Y0 + m_random_flat.fire()*(m_Y1 - m_Y0);
       
-        if (m_flat_distrib_zpos) zpos = m_Z0 + m_random_flat->fire()*(m_Z1 - m_Z0);
-        else                     zpos = m_distrib_zpos->GetRandom(m_Z0, m_Z1);
+        if (m_distrib_zpos) zpos = m_distrib_zpos->GetRandom(m_Z0, m_Z1);
+        else                zpos = m_Z0 + m_random_flat.fire()*(m_Z1 - m_Z0);
 
         auto node = gGeoManager->FindNode(xpos, ypos, zpos);
         
@@ -528,7 +553,7 @@ namespace evgen {
       if (m_good_nodes.empty() or m_volume_cc == 0)
         MF_LOG_ERROR("BaseRadioGen") << "There is no node to throw events in!";
       
-      double which_vol = m_random_flat->fire()*m_volume_cc;
+      double which_vol = m_random_flat.fire()*m_volume_cc;
     
       const TGeoNode* node = nullptr;
       size_t i=0;
@@ -558,14 +583,14 @@ namespace evgen {
         double ypos = std::numeric_limits<double>::signaling_NaN();
         double zpos = std::numeric_limits<double>::signaling_NaN();
         
-        if (m_flat_distrib_xpos) xpos = x_min + m_random_flat->fire()*(x_max - x_min);
-        else                     xpos = m_distrib_xpos->GetRandom(x_min, x_max);
+        if (m_distrib_xpos) xpos = m_distrib_xpos->GetRandom(x_min, x_max);
+        else                xpos = x_min + m_random_flat.fire()*(x_max - x_min);
       
-        if (m_flat_distrib_ypos) ypos = y_min + m_random_flat->fire()*(y_max - y_min);
-        else                     ypos = m_distrib_ypos->GetRandom(y_min, y_max);
+        if (m_distrib_ypos) ypos = m_distrib_ypos->GetRandom(y_min, y_max);
+        else                ypos = y_min + m_random_flat.fire()*(y_max - y_min);
       
-        if (m_flat_distrib_zpos) zpos = z_min + m_random_flat->fire()*(z_max - z_min);
-        else                     zpos = m_distrib_zpos->GetRandom(z_min, z_max);
+        if (m_distrib_zpos) zpos = m_distrib_zpos->GetRandom(z_min, z_max);
+        else                zpos = z_min + m_random_flat.fire()*(z_max - z_min);
 
         if (std::isnan(xpos) or std::isnan(ypos) or std::isnan(zpos)) {
           MF_LOG_ERROR("BaseRadioGen") << "Error in generation of random position!";
@@ -590,10 +615,10 @@ namespace evgen {
   int BaseRadioGen::GetNDecays() {
 
     if (m_rate_mode) {
-      return m_random_poisson->fire(m_rate);
+      return m_random_poisson.fire(m_rate);
     } else {
       double rate = abs(m_Bq * (m_T1-m_T0) * m_volume_cc / 1.0E9);
-      return m_random_poisson->fire(rate);
+      return m_random_poisson.fire(rate);
     }
 
   }
@@ -766,13 +791,13 @@ namespace evgen {
 
   TLorentzVector BaseRadioGen::dirCalc(double p, double m) {
     // isotropic production angle for the decay product
-    double costheta = (2.0*m_random_flat->fire() - 1.0);
+    double costheta = (2.0*m_random_flat.fire() - 1.0);
 
     if (costheta < -1.0) costheta = -1.0;
     if (costheta > 1.0) costheta = 1.0;
 
     double const sintheta = sqrt(1.0-costheta*costheta);
-    double const phi = 2.0*M_PI*m_random_flat->fire();
+    double const phi = 2.0*M_PI*m_random_flat.fire();
 
     return TLorentzVector{p*sintheta*std::cos(phi),
         p*sintheta*std::sin(phi),
