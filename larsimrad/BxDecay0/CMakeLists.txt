@@ -1,6 +1,5 @@
-include_directories ( ENV BXDECAY0_INC )
+include_directories ( $ENV{NUGEN_INC} )
 cet_find_library( BXDECAY0 NAMES BxDecay0 PATHS ENV BXDECAY0_LIB NO_DEFAULT_PATH )
-#cet_find_library( GSL NAMES gsl PATHS ENV GSL_LIB NO_DEFAULT_PATH )
 
 art_make(MODULE_LIBRARIES
          larsim_Simulation

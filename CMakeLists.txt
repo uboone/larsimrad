@@ -13,8 +13,6 @@ project(larsimrad VERSION 09.03.08 LANGUAGES CXX)
 # cetbuildtools contains our cmake modules
 find_package(cetbuildtools REQUIRED)
 
-list(APPEND CMAKE_MODULE_PATH $ENV{CANVAS_ROOT_IO_DIR}/Modules $ENV{ART_DIR}/Modules)
-
 include(CetCMakeEnv)
 cet_cmake_env()
 
@@ -27,10 +25,13 @@ cet_set_compiler_flags(DIAGS CAUTIOUS
 
 cet_report_compiler_flags()
 
-# these are minimum required versions, not the actual product versions
-unset(GSL_FOUND CACHE) # Workaround infelicity in CMake's FindPkgConfig.cmake.
-find_ups_product(gsl)
-find_ups_product(art_root_io)
+find_package(canvas_root_io REQUIRED)
+find_package(art REQUIRED PUBLIC)
+find_package(art_root_io REQUIRED PUBLIC)
+find_package(nugen REQUIRED PUBLIC)
+find_package(nurandom REQUIRED PUBLIC)
+find_package(GSL REQUIRED)
+
 find_ups_product( larcore )
 find_ups_product( larcoreobj )
 find_ups_product( lardataobj )
@@ -38,8 +39,6 @@ find_ups_product( lardataalg )
 find_ups_product( lardata )
 find_ups_product( larsim )
 find_ups_product( bxdecay0 )
-find_ups_product( nugen )
-find_ups_product( nurandom )
 
 # macros for dictionary and simple_plugin
 include(ArtDictionary)
