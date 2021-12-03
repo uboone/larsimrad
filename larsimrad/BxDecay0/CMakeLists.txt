@@ -6,11 +6,11 @@ art_make(MODULE_LIBRARIES
          larsim_Simulation
          lardataalg_DetectorInfo
          lardataobj_Simulation
-         nusimdata_SimulationBase
+         nusimdata::SimulationBase
          larcoreobj_SummaryData
          larcorealg_Geometry
          larcore_Geometry_Geometry_service
-         nurandom_RandomUtils_NuRandomService_service
+         nurandom::RandomUtils_NuRandomService_service
          BXDECAY0
          art::Framework_Services_Registry
          art_root_io::tfile_support
